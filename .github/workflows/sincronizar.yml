@@ -2,19 +2,24 @@ name: Sincronizar GLPI - GEMS
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: "*/15 * * * *"
+
   workflow_dispatch:
 
 jobs:
   sincronizar:
+    name: Sincronização GLPI
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
 
     steps:
       - name: Baixar código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configurar Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm

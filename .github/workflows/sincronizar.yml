@@ -1,42 +1,103 @@
-name: Sincronizar GLPI - GEMS
+name: CONTROLE GEMS - Sincronização GLPI
 
 on:
+  # Executa automaticamente a cada 15 minutos
   schedule:
     - cron: "*/15 * * * *"
+      timezone: "America/Manaus"
 
+  # Permite executar manualmente pelo GitHub
   workflow_dispatch:
+
+# Impede duas sincronizações simultâneas
+concurrency:
+  group: controle-gems-sincronizacao
+  cancel-in-progress: false
 
 jobs:
   sincronizar:
-    name: Sincronização GLPI
+
+    name: Sincronizar GLPI com Google Sheets
+
     runs-on: ubuntu-latest
+
+    # Usa os Secrets e Variables cadastrados
+    # no Environment "production"
+    environment: production
 
     permissions:
       contents: read
 
     steps:
-      - name: Baixar código
-        uses: actions/checkout@v5
+
+      # ======================================================
+      # 1. BAIXAR O CÓDIGO DO REPOSITÓRIO
+      # ======================================================
+
+      - name: Baixar código do repositório
+        uses: actions/checkout@v6
+
+
+      # ======================================================
+      # 2. CONFIGURAR NODE.JS
+      # ======================================================
 
       - name: Configurar Node.js
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: "24"
           cache: npm
+
+
+      # ======================================================
+      # 3. VERIFICAR VERSÕES
+      # ======================================================
+
+      - name: Verificar Node.js e npm
+        run: |
+          node --version
+          npm --version
+
+
+      # ======================================================
+      # 4. INSTALAR DEPENDÊNCIAS
+      # ======================================================
 
       - name: Instalar dependências
         run: npm ci
 
+
+      # ======================================================
+      # 5. EXECUTAR SINCRONIZAÇÃO
+      # ======================================================
+
       - name: Executar sincronização
         env:
-          GLPI_URL_BASE: ${{ secrets.GLPI_URL_BASE }}
+
+          # --------------------------------------------------
+          # VARIABLES
+          # --------------------------------------------------
+
+          GLPI_URL_BASE: ${{ vars.GLPI_URL_BASE }}
+
+          GLPI_GRUPO_GEMS: ${{ vars.GLPI_GRUPO_GEMS }}
+
+          GOOGLE_SHEETS_ABA: ${{ vars.GOOGLE_SHEETS_ABA }}
+
+
+          # --------------------------------------------------
+          # SECRETS
+          # --------------------------------------------------
+
           GLPI_USER_TOKEN: ${{ secrets.GLPI_USER_TOKEN }}
+
           GLPI_APP_TOKEN: ${{ secrets.GLPI_APP_TOKEN }}
-          GLPI_GRUPO_GEMS: ${{ secrets.GLPI_GRUPO_GEMS }}
 
           GOOGLE_SHEETS_ID: ${{ secrets.GOOGLE_SHEETS_ID }}
-          GOOGLE_SHEETS_ABA: ${{ secrets.GOOGLE_SHEETS_ABA }}
+
           GOOGLE_CLIENT_EMAIL: ${{ secrets.GOOGLE_CLIENT_EMAIL }}
+
           GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
+
 
         run: node index.js

@@ -713,6 +713,7 @@ async function executar() {
                     });
 
                 }
+            }
 
                 catch (erro) {
 

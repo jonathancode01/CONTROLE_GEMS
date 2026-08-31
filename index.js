@@ -529,6 +529,10 @@ async function executar() {
                     }
 
 
+                    /* =================================================
+                     * IDENTIFICAR GLPI
+                     * ================================================= */
+
                     const numeroGlpi =
                         String(
                             resultado.glpi || ''
@@ -539,6 +543,10 @@ async function executar() {
                     }
 
 
+                    /* =================================================
+                     * IDENTIFICAR TÉCNICO
+                     * ================================================= */
+
                     const tecnico =
                         String(
                             resultado.tecnicoResponsavel || ''
@@ -548,22 +556,25 @@ async function executar() {
                         tecnico !== '';
 
 
+                    /* =================================================
+                     * PROCURAR CHAMADO NA PLANILHA
+                     * ================================================= */
+
                     const existente =
                         mapaPlanilha.get(
                             numeroGlpi
                         );
 
 
-                    /* ========================================
+                    /* =================================================
                      * NOVO CHAMADO
-                     * ======================================== */
+                     * ================================================= */
 
                     if (!existente) {
 
                         /*
-                         * Novo sem técnico:
-                         *
-                         * Não entra na planilha.
+                         * Chamado novo sem técnico:
+                         * não inserir.
                          */
 
                         if (!temTecnico) {
@@ -579,7 +590,7 @@ async function executar() {
 
 
                         /*
-                         * Proteção adicional contra duplicação.
+                         * Evitar duplicação
                          */
 
                         if (
@@ -589,29 +600,12 @@ async function executar() {
                         ) {
 
                             console.log(
-                                `⚠ Chamado ${numeroGlpi} já está na fila de novos. Ignorando duplicação.`
+                                `⚠ Chamado ${numeroGlpi} já está na fila de novos.`
                             );
 
                             return;
                         }
 
-
-                        if (!existente) {
-
-                        /*
-                        * NOVO SEM TÉCNICO
-                        */
-
-                        if (!temTecnico) {
-
-                            ignoradosSemTecnico++;
-
-                            console.log(
-                                `⏭ Chamado ${numeroGlpi} ignorado: novo e sem técnico.`
-                            );
-
-                            return;
-                        }
 
                         const linha =
                             chamadoParaLinhaSheets(
@@ -620,16 +614,17 @@ async function executar() {
 
                         if (linha) {
 
-                            novos.push(linha);
+                            novos.push(
+                                linha
+                            );
+
+                            novosGlpis.add(
+                                numeroGlpi
+                            );
 
                             /*
-                            * IMPORTANTE:
-                            * adiciona imediatamente ao mapa.
-                            *
-                            * Assim, se o mesmo GLPI aparecer
-                            * novamente durante esta execução,
-                            * ele NÃO será considerado novo.
-                            */
+                             * Adicionar imediatamente ao mapa.
+                             */
 
                             mapaPlanilha.set(
                                 numeroGlpi,
@@ -638,23 +633,19 @@ async function executar() {
                                     dados: linha
                                 }
                             );
+
+                            console.log(
+                                `➕ Novo chamado ${numeroGlpi}: ${resultado.status}`
+                            );
                         }
 
                         return;
                     }
 
 
-                    /* ========================================
+                    /* =================================================
                      * CHAMADO EXISTENTE SEM TÉCNICO
-                     * ======================================== */
-
-                    /*
-                     * Se o chamado já existe e o GLPI
-                     * não possui técnico, removemos da planilha
-                     * independentemente do status.
-                     *
-                     * Isso é importante para o seu caso do Igo.
-                     */
+                     * ================================================= */
 
                     if (!temTecnico) {
 
@@ -672,9 +663,9 @@ async function executar() {
                     }
 
 
-                    /* ========================================
-                     * ATUALIZAR EXISTENTE
-                     * ======================================== */
+                    /* =================================================
+                     * ATUALIZAR CHAMADO EXISTENTE
+                     * ================================================= */
 
                     const linha =
                         chamadoParaLinhaSheets(
@@ -682,13 +673,18 @@ async function executar() {
                         );
 
                     if (!linha) {
+
+                        console.log(
+                            `⚠ Não foi possível montar a linha do GLPI ${numeroGlpi}.`
+                        );
+
                         return;
                     }
 
 
-                    /*
-                     * Preservar data histórica.
-                     */
+                    /* =================================================
+                     * PRESERVAR DATA ORIGINAL
+                     * ================================================= */
 
                     const linhaFinal =
                         preservarDataExistente(
@@ -696,6 +692,10 @@ async function executar() {
                             linha
                         );
 
+
+                    /* =================================================
+                     * COLOCAR NA FILA DE ATUALIZAÇÃO
+                     * ================================================= */
 
                     atualizados.push({
 
@@ -712,16 +712,27 @@ async function executar() {
                             resultado
                     });
 
-                }
-            }
 
+                    /* =================================================
+                     * LOG DE DEBUG
+                     * ================================================= */
+
+                    console.log(
+                        `🔄 GLPI ${numeroGlpi} | ` +
+                        `Linha ${existente.linha} | ` +
+                        `Status: ${existente.dados[5] || '(vazio)'} → ${linhaFinal[5] || '(vazio)'}`
+                    );
+
+                }
                 catch (erro) {
 
                     console.error(
                         `✗ Erro processando chamado ${indice + 1}:`,
                         erro.message
                     );
+
                 }
+
             }
         );
 

@@ -44,10 +44,9 @@ const CONFIG = {
 
 async function buscarTodosChamados(sessao) {
 
-    const todos = [];
+    const mapaChamados = new Map();
 
     let offset = 0;
-
     let total = null;
 
     while (true) {
@@ -66,7 +65,9 @@ async function buscarTodosChamados(sessao) {
             );
 
         const registros =
-            resposta.data || [];
+            Array.isArray(resposta.data)
+                ? resposta.data
+                : [];
 
         if (total === null) {
 
@@ -76,22 +77,48 @@ async function buscarTodosChamados(sessao) {
                 );
         }
 
-        todos.push(
-            ...registros
-        );
-
         console.log(
-            `→ Recebidos: ${registros.length}`
+            `  → Recebidos: ${registros.length}`
         );
 
-        if (
-            registros.length === 0
-        ) {
+        /*
+         * =====================================================
+         * DEDUPLICAR PELO ID DO CHAMADO
+         * =====================================================
+         */
+
+        for (const chamado of registros) {
+
+            const id =
+                String(
+                    chamado['2'] ||
+                    chamado.id ||
+                    ''
+                ).trim();
+
+            if (!id) {
+                continue;
+            }
+
+            /*
+             * Se o chamado já foi recebido anteriormente,
+             * não adiciona novamente.
+             */
+            if (!mapaChamados.has(id)) {
+
+                mapaChamados.set(
+                    id,
+                    chamado
+                );
+
+            }
+        }
+
+        if (registros.length === 0) {
             break;
         }
 
-        offset +=
-            registros.length;
+        offset += registros.length;
 
         if (
             registros.length <
@@ -108,7 +135,17 @@ async function buscarTodosChamados(sessao) {
         }
     }
 
-    return todos;
+    const chamadosUnicos =
+        Array.from(
+            mapaChamados.values()
+        );
+
+    console.log('');
+    console.log(
+        `✓ Chamados recebidos: ${mapaChamados.size}`
+    );
+
+    return chamadosUnicos;
 }
 
 
@@ -559,6 +596,23 @@ async function executar() {
                         }
 
 
+                        if (!existente) {
+
+                        /*
+                        * NOVO SEM TÉCNICO
+                        */
+
+                        if (!temTecnico) {
+
+                            ignoradosSemTecnico++;
+
+                            console.log(
+                                `⏭ Chamado ${numeroGlpi} ignorado: novo e sem técnico.`
+                            );
+
+                            return;
+                        }
+
                         const linha =
                             chamadoParaLinhaSheets(
                                 resultado
@@ -566,12 +620,23 @@ async function executar() {
 
                         if (linha) {
 
-                            novos.push(
-                                linha
-                            );
+                            novos.push(linha);
 
-                            novosGlpis.add(
-                                numeroGlpi
+                            /*
+                            * IMPORTANTE:
+                            * adiciona imediatamente ao mapa.
+                            *
+                            * Assim, se o mesmo GLPI aparecer
+                            * novamente durante esta execução,
+                            * ele NÃO será considerado novo.
+                            */
+
+                            mapaPlanilha.set(
+                                numeroGlpi,
+                                {
+                                    linha: null,
+                                    dados: linha
+                                }
                             );
                         }
 

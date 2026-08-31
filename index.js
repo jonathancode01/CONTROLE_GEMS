@@ -1,40 +1,23 @@
 require('dotenv').config();
 
-
 const {
-
     iniciarSessaoGLPI,
-
     encerrarSessaoGLPI,
-
     buscarChamados,
-
     enriquecerTecnicos
-
 } = require('./src/glpi');
 
-
 const {
-
     tratarChamado,
-
     chamadoParaLinhaSheets
-
 } = require('./src/tratamento');
 
-
 const {
-
     obterDadosPlanilha,
-
     adicionarLinhas,
-
     atualizarLinhasBatch,
-
     removerLinhasBatch,
-
     formatarStatus
-
 } = require('./src/google-sheets');
 
 
@@ -52,7 +35,6 @@ const CONFIG = {
 
     TAMANHO_PAGINA:
         100
-
 };
 
 
@@ -60,9 +42,7 @@ const CONFIG = {
  * BUSCAR TODOS OS CHAMADOS
  * ============================================================ */
 
-async function buscarTodosChamados(
-    sessao
-) {
+async function buscarTodosChamados(sessao) {
 
     const todos = [];
 
@@ -70,37 +50,25 @@ async function buscarTodosChamados(
 
     let total = null;
 
-
     while (true) {
 
         console.log(
             `Buscando lote: ${offset} - ${offset + CONFIG.TAMANHO_PAGINA - 1}`
         );
 
-
         const resposta =
             await buscarChamados(
-
                 sessao,
-
                 CONFIG.DATA_INICIO,
-
                 CONFIG.DATA_FIM,
-
                 offset,
-
                 CONFIG.TAMANHO_PAGINA
-
             );
-
 
         const registros =
             resposta.data || [];
 
-
-        if (
-            total === null
-        ) {
+        if (total === null) {
 
             total =
                 Number(
@@ -108,59 +76,92 @@ async function buscarTodosChamados(
                 );
         }
 
-
         todos.push(
             ...registros
         );
 
-
         console.log(
-            `  → Recebidos: ${registros.length}`
+            `→ Recebidos: ${registros.length}`
         );
-
 
         if (
             registros.length === 0
         ) {
-
             break;
         }
 
-
         offset +=
             registros.length;
-
 
         if (
             registros.length <
             CONFIG.TAMANHO_PAGINA
         ) {
-
             break;
         }
-
 
         if (
             total > 0 &&
             offset >= total
         ) {
-
             break;
         }
     }
-
 
     return todos;
 }
 
 
 /* ============================================================
+ * DEDUPLICAR CHAMADOS DO GLPI
+ *
+ * Garante:
+ *
+ * 1 GLPI = 1 objeto
+ *
+ * Caso a API retorne o mesmo chamado duas vezes,
+ * somente uma ocorrência será processada.
+ * ============================================================ */
+
+function deduplicarChamados(chamados) {
+
+    const mapa =
+        new Map();
+
+    for (
+        const chamado of chamados
+    ) {
+
+        const numeroGlpi =
+            String(
+                chamado?.['2'] ||
+                chamado?.id ||
+                ''
+            ).trim();
+
+        if (!numeroGlpi) {
+            continue;
+        }
+
+        if (
+            !mapa.has(numeroGlpi)
+        ) {
+
+            mapa.set(
+                numeroGlpi,
+                chamado
+            );
+        }
+    }
+
+    return Array.from(
+        mapa.values()
+    );
+}
+
+
+/* ============================================================
  * PRESERVAR DATA EXISTENTE
- *
- * Mantém a data que já está na planilha.
- *
- * Caso seja uma linha antiga no formato ISO,
- * converte para DD/MM/AAAA.
  * ============================================================ */
 
 function preservarDataExistente(
@@ -171,29 +172,19 @@ function preservarDataExistente(
     const linha =
         [...dadosNovos];
 
-
     const dataExistente =
         String(
             dadosAntigos?.[0] || ''
         ).trim();
 
-
     if (!dataExistente) {
-
         return linha;
     }
-
-
-    /*
-     * Se já estiver DD/MM/AAAA,
-     * mantém.
-     */
 
     const dataBR =
         dataExistente.match(
             /^(\d{2})\/(\d{2})\/(\d{4})/
         );
-
 
     if (dataBR) {
 
@@ -203,22 +194,10 @@ function preservarDataExistente(
         return linha;
     }
 
-
-    /*
-     * Converter datas antigas ISO:
-     *
-     * 2026-08-24T13:38:00.000Z
-     *
-     * ou:
-     *
-     * 2026-08-24 08:38:00
-     */
-
     const dataISO =
         dataExistente.match(
             /^(\d{4})-(\d{2})-(\d{2})/
         );
-
 
     if (dataISO) {
 
@@ -226,8 +205,86 @@ function preservarDataExistente(
             `${dataISO[3]}/${dataISO[2]}/${dataISO[1]}`;
     }
 
-
     return linha;
+}
+
+
+/* ============================================================
+ * CRIAR MAPA DA PLANILHA
+ *
+ * Também detecta duplicados existentes.
+ *
+ * O primeiro registro encontrado será mantido.
+ * Os demais serão removidos.
+ * ============================================================ */
+
+function criarMapaPlanilha(
+    dadosPlanilha
+) {
+
+    const mapa =
+        new Map();
+
+    const duplicados =
+        [];
+
+    dadosPlanilha.forEach(
+        (linha, indice) => {
+
+            /*
+             * Ignorar cabeçalho.
+             */
+
+            if (
+                indice === 0
+            ) {
+                return;
+            }
+
+            const numeroGlpi =
+                String(
+                    linha[1] || ''
+                ).trim();
+
+            if (!numeroGlpi) {
+                return;
+            }
+
+            const numeroLinha =
+                indice + 1;
+
+            if (
+                mapa.has(numeroGlpi)
+            ) {
+
+                duplicados.push(
+                    numeroLinha
+                );
+
+                console.log(
+                    `⚠ Duplicado encontrado: GLPI ${numeroGlpi} na linha ${numeroLinha}`
+                );
+
+                return;
+            }
+
+            mapa.set(
+                numeroGlpi,
+                {
+                    linha:
+                        numeroLinha,
+
+                    dados:
+                        linha
+                }
+            );
+        }
+    );
+
+    return {
+        mapa,
+        duplicados
+    };
 }
 
 
@@ -257,9 +314,7 @@ async function executar() {
 
     console.log('');
 
-
     let sessao = null;
-
 
     try {
 
@@ -271,10 +326,8 @@ async function executar() {
             '1. Iniciando sessão GLPI...'
         );
 
-
         sessao =
             await iniciarSessaoGLPI();
-
 
         console.log(
             '✓ Sessão GLPI iniciada.'
@@ -291,75 +344,37 @@ async function executar() {
             '2. Lendo dados atuais do Google Sheets...'
         );
 
-
         const dadosPlanilha =
             await obterDadosPlanilha();
 
-
         console.log(
-            `✓ Registros encontrados na planilha: ${dadosPlanilha.length}`
+            `✓ Registros encontrados: ${dadosPlanilha.length}`
         );
 
         console.log('');
 
 
         /* ====================================================
-         * 3. MAPA DOS CHAMADOS
+         * 3. MAPEAR PLANILHA
          * ==================================================== */
 
+        const resultadoMapa =
+            criarMapaPlanilha(
+                dadosPlanilha
+            );
+
         const mapaPlanilha =
-            new Map();
+            resultadoMapa.mapa;
 
-
-        dadosPlanilha.forEach(
-            (linha, indice) => {
-
-                /*
-                 * Ignorar cabeçalho.
-                 */
-
-                if (
-                    indice === 0
-                ) {
-
-                    return;
-                }
-
-
-                const numeroGlpi =
-                    String(
-                        linha[1] || ''
-                    ).trim();
-
-
-                if (!numeroGlpi) {
-
-                    return;
-                }
-
-
-                mapaPlanilha.set(
-
-                    numeroGlpi,
-
-                    {
-
-                        linha:
-                            indice + 1,
-
-                        dados:
-                            linha
-
-                    }
-
-                );
-
-            }
-        );
-
+        const duplicadosPlanilha =
+            resultadoMapa.duplicados;
 
         console.log(
-            `✓ Mapa criado com ${mapaPlanilha.size} chamados.`
+            `✓ Chamados únicos na planilha: ${mapaPlanilha.size}`
+        );
+
+        console.log(
+            `⚠ Linhas duplicadas encontradas: ${duplicadosPlanilha.length}`
         );
 
         console.log('');
@@ -373,12 +388,10 @@ async function executar() {
             '3. Buscando chamados no GLPI...'
         );
 
-
         let chamados =
             await buscarTodosChamados(
                 sessao
             );
-
 
         console.log(
             `✓ Chamados recebidos do GLPI: ${chamados.length}`
@@ -388,23 +401,44 @@ async function executar() {
 
 
         /* ====================================================
-         * 4.1. TÉCNICOS
+         * 4.1. DEDUPLICAR RETORNO DO GLPI
+         * ==================================================== */
+
+        const quantidadeAntes =
+            chamados.length;
+
+        chamados =
+            deduplicarChamados(
+                chamados
+            );
+
+        const quantidadeDepois =
+            chamados.length;
+
+        console.log(
+            `✓ Chamados únicos após deduplicação: ${quantidadeDepois}`
+        );
+
+        console.log(
+            `⚠ Duplicados removidos do retorno do GLPI: ${quantidadeAntes - quantidadeDepois}`
+        );
+
+        console.log('');
+
+
+        /* ====================================================
+         * 4.2. IDENTIFICAR TÉCNICOS
          * ==================================================== */
 
         console.log(
             '3.1. Identificando técnicos responsáveis...'
         );
 
-
         chamados =
             await enriquecerTecnicos(
-
                 sessao,
-
                 chamados
-
             );
-
 
         console.log(
             '✓ Técnicos identificados.'
@@ -414,14 +448,17 @@ async function executar() {
 
 
         /* ====================================================
-         * 5. PROCESSAR
+         * 5. PROCESSAMENTO
          * ==================================================== */
 
-        const novos = [];
+        const novos =
+            [];
 
-        const atualizados = [];
+        const atualizados =
+            [];
 
-        const linhasParaRemover = [];
+        const linhasParaRemover =
+            [];
 
 
         let ignoradosSemTecnico =
@@ -431,8 +468,16 @@ async function executar() {
             0;
 
 
-        chamados.forEach(
+        /*
+         * Controle para impedir que um mesmo GLPI
+         * seja colocado duas vezes em "novos".
+         */
 
+        const novosGlpis =
+            new Set();
+
+
+        chamados.forEach(
             (chamado, indice) => {
 
                 try {
@@ -442,9 +487,7 @@ async function executar() {
                             chamado
                         );
 
-
                     if (!resultado) {
-
                         return;
                     }
 
@@ -454,9 +497,7 @@ async function executar() {
                             resultado.glpi || ''
                         ).trim();
 
-
                     if (!numeroGlpi) {
-
                         return;
                     }
 
@@ -465,7 +506,6 @@ async function executar() {
                         String(
                             resultado.tecnicoResponsavel || ''
                         ).trim();
-
 
                     const temTecnico =
                         tecnico !== '';
@@ -484,7 +524,7 @@ async function executar() {
                     if (!existente) {
 
                         /*
-                         * NOVO SEM TÉCNICO:
+                         * Novo sem técnico:
                          *
                          * Não entra na planilha.
                          */
@@ -501,52 +541,57 @@ async function executar() {
                         }
 
 
+                        /*
+                         * Proteção adicional contra duplicação.
+                         */
+
+                        if (
+                            novosGlpis.has(
+                                numeroGlpi
+                            )
+                        ) {
+
+                            console.log(
+                                `⚠ Chamado ${numeroGlpi} já está na fila de novos. Ignorando duplicação.`
+                            );
+
+                            return;
+                        }
+
+
                         const linha =
                             chamadoParaLinhaSheets(
                                 resultado
                             );
-
 
                         if (linha) {
 
                             novos.push(
                                 linha
                             );
-                        }
 
+                            novosGlpis.add(
+                                numeroGlpi
+                            );
+                        }
 
                         return;
                     }
 
 
                     /* ========================================
-                     * CHAMADO EXISTENTE
+                     * CHAMADO EXISTENTE SEM TÉCNICO
                      * ======================================== */
 
                     /*
-                     * REGRA:
+                     * Se o chamado já existe e o GLPI
+                     * não possui técnico, removemos da planilha
+                     * independentemente do status.
                      *
-                     * Existente + sem técnico +
-                     * CONCLUIDO
-                     *
-                     * OU
-                     *
-                     * Existente + sem técnico +
-                     * EM EXECUÇÃO
-                     *
-                     * = REMOVER
+                     * Isso é importante para o seu caso do Igo.
                      */
 
-                    if (
-                        !temTecnico &&
-                        (
-                            resultado.status ===
-                                'CONCLUIDO' ||
-
-                            resultado.status ===
-                                'EM EXECUÇÃO'
-                        )
-                    ) {
+                    if (!temTecnico) {
 
                         linhasParaRemover.push(
                             existente.linha
@@ -555,22 +600,11 @@ async function executar() {
                         removidosSemTecnico++;
 
                         console.log(
-
-                            `🗑 Chamado ${numeroGlpi} será removido: ${resultado.status} e sem técnico.`
-
+                            `🗑 Chamado ${numeroGlpi} será removido: sem técnico no GLPI.`
                         );
 
                         return;
                     }
-
-
-                    /*
-                     * PENDENTE sem técnico:
-                     *
-                     * NÃO remove.
-                     *
-                     * Ele permanece na planilha.
-                     */
 
 
                     /* ========================================
@@ -582,25 +616,19 @@ async function executar() {
                             resultado
                         );
 
-
                     if (!linha) {
-
                         return;
                     }
 
 
                     /*
-                     * Preservar data histórica
-                     * quando necessário.
+                     * Preservar data histórica.
                      */
 
                     const linhaFinal =
                         preservarDataExistente(
-
                             existente.dados,
-
                             linha
-
                         );
 
 
@@ -617,29 +645,48 @@ async function executar() {
 
                         resultado:
                             resultado
-
                     });
 
                 }
+
                 catch (erro) {
 
                     console.error(
-
                         `✗ Erro processando chamado ${indice + 1}:`,
-
                         erro.message
-
                     );
-
                 }
-
             }
-
         );
 
 
         /* ====================================================
-         * RESUMO DO PROCESSAMENTO
+         * 5.1. REMOVER DUPLICADOS DA PLANILHA
+         * ==================================================== */
+
+        /*
+         * Os duplicados históricos também serão removidos.
+         */
+
+        duplicadosPlanilha.forEach(
+            linha => {
+
+                if (
+                    !linhasParaRemover.includes(
+                        linha
+                    )
+                ) {
+
+                    linhasParaRemover.push(
+                        linha
+                    );
+                }
+            }
+        );
+
+
+        /* ====================================================
+         * RESUMO
          * ==================================================== */
 
         console.log('');
@@ -661,7 +708,11 @@ async function executar() {
         );
 
         console.log(
-            `Existentes sem técnico para remover: ${removidosSemTecnico}`
+            `Linhas para remover: ${linhasParaRemover.length}`
+        );
+
+        console.log(
+            `Duplicados históricos encontrados: ${duplicadosPlanilha.length}`
         );
 
         console.log(
@@ -678,7 +729,6 @@ async function executar() {
         console.log(
             '4. Inserindo novos chamados...'
         );
-
 
         if (
             novos.length > 0
@@ -700,7 +750,6 @@ async function executar() {
             );
         }
 
-
         console.log('');
 
 
@@ -711,7 +760,6 @@ async function executar() {
         console.log(
             '5. Atualizando chamados existentes...'
         );
-
 
         if (
             atualizados.length > 0
@@ -733,28 +781,16 @@ async function executar() {
             );
         }
 
-
         console.log('');
 
 
         /* ====================================================
-         * 8. REMOVER CONCLUÍDOS / EM EXECUÇÃO SEM TÉCNICO
+         * 8. REMOVER
          * ==================================================== */
 
         console.log(
-            '6. Removendo chamados concluídos/em execução sem técnico...'
+            '6. Removendo chamados sem técnico e duplicados...'
         );
-
-
-        /*
-         * IMPORTANTE:
-         *
-         * As linhas são removidas da maior
-         * para a menor dentro de removerLinhasBatch().
-         *
-         * Portanto a posição das demais linhas
-         * não é comprometida.
-         */
 
         if (
             linhasParaRemover.length > 0
@@ -765,19 +801,16 @@ async function executar() {
             );
 
             console.log(
-
-                `✓ ${linhasParaRemover.length} chamados removidos.`
-
+                `✓ ${linhasParaRemover.length} linhas removidas.`
             );
 
         }
         else {
 
             console.log(
-                '✓ Nenhum chamado para remover.'
+                '✓ Nenhuma linha para remover.'
             );
         }
-
 
         console.log('');
 
@@ -790,14 +823,11 @@ async function executar() {
             '7. Atualizando cores dos status...'
         );
 
-
         await formatarStatus();
-
 
         console.log(
             '✓ Status formatados.'
         );
-
 
         console.log('');
 
@@ -833,16 +863,25 @@ async function executar() {
         );
 
         console.log(
-            `Removidos sem técnico: ${linhasParaRemover.length}`
+            `Linhas removidas: ${linhasParaRemover.length}`
         );
 
         console.log(
-            `Total recebido do GLPI: ${chamados.length}`
+            `Duplicados históricos: ${duplicadosPlanilha.length}`
+        );
+
+        console.log(
+            `Total recebido do GLPI: ${quantidadeAntes}`
+        );
+
+        console.log(
+            `Total único processado: ${quantidadeDepois}`
         );
 
         console.log('');
 
     }
+
     catch (erro) {
 
         console.error('');
@@ -870,8 +909,8 @@ async function executar() {
         console.error(
             erro.stack
         );
-
     }
+
     finally {
 
         /* ====================================================
@@ -897,7 +936,6 @@ async function executar() {
                     'Erro ao encerrar sessão GLPI:',
                     erro.message
                 );
-
             }
         }
     }

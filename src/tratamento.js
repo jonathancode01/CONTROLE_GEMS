@@ -55,12 +55,6 @@ function converterDataGLPI(texto) {
     const valor =
         String(texto).trim();
 
-    /*
-     * Formato padrão do GLPI:
-     *
-     * 2026-08-24 08:07:01
-     */
-
     const match =
         valor.match(
             /^(\d{4})-(\d{2})-(\d{2})/
@@ -68,21 +62,8 @@ function converterDataGLPI(texto) {
 
     if (match) {
 
-        const ano =
-            match[1];
-
-        const mes =
-            match[2];
-
-        const dia =
-            match[3];
-
-        return `${dia}/${mes}/${ano}`;
+        return `${match[3]}/${match[2]}/${match[1]}`;
     }
-
-    /*
-     * Caso já venha no formato DD/MM/AAAA.
-     */
 
     const formatoBR =
         valor.match(

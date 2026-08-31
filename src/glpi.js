@@ -16,7 +16,6 @@ const GLPI_URL_BASE =
 const cacheUsuariosGLPI = new Map();
 const cacheTecnicosChamados = new Map();
 const cacheTicketUsers = new Map();
-const cacheTicketTasks = new Map();
 
 
 /* ============================================================
@@ -86,7 +85,6 @@ async function iniciarSessaoGLPI() {
     );
 
     return {
-
         sessionToken:
             dados.session_token,
 
@@ -210,17 +208,11 @@ async function buscarChamados(
         )}`,
 
         `forcedisplay[0]=2`,
-
         `forcedisplay[1]=15`,
-
         `forcedisplay[2]=83`,
-
         `forcedisplay[3]=12`,
-
         `forcedisplay[4]=21`,
-
         `forcedisplay[5]=5`,
-
         `forcedisplay[6]=19`,
 
         `expand_dropdowns=true`,
@@ -279,7 +271,6 @@ async function buscarChamados(
     );
 
     return {
-
         data:
             registros,
 
@@ -343,16 +334,6 @@ async function buscarNomeUsuarioGLPI(
 
         const usuario =
             await resposta.json();
-
-        /*
-         * PRIORIDADE:
-         *
-         * 1. completename
-         * 2. firstname + realname
-         * 3. name
-         *
-         * Não utiliza CPF.
-         */
 
         let nome = '';
 
@@ -494,88 +475,6 @@ async function buscarTicketUsers(
 
 
 /* ============================================================
- * BUSCAR TAREFAS
- * ============================================================ */
-
-async function buscarTicketTasks(
-    sessao,
-    chamadoId
-) {
-
-    const id =
-        String(chamadoId || '').trim();
-
-    if (!id) {
-        return [];
-    }
-
-    if (
-        cacheTicketTasks.has(id)
-    ) {
-
-        return cacheTicketTasks.get(id);
-    }
-
-    try {
-
-        const resposta =
-            await fetch(
-                `${GLPI_URL_BASE}/Ticket/${id}/TicketTask/`,
-                {
-                    method: 'GET',
-
-                    headers: {
-                        'Session-Token':
-                            sessao.sessionToken,
-
-                        'App-Token':
-                            sessao.appToken
-                    }
-                }
-            );
-
-        if (!resposta.ok) {
-
-            console.error(
-                `Erro TicketTask ${id}: HTTP ${resposta.status}`
-            );
-
-            cacheTicketTasks.set(id, []);
-
-            return [];
-        }
-
-        const dados =
-            await resposta.json();
-
-        const tarefas =
-            Array.isArray(dados)
-                ? dados
-                : [];
-
-        cacheTicketTasks.set(
-            id,
-            tarefas
-        );
-
-        return tarefas;
-
-    }
-    catch (erro) {
-
-        console.error(
-            `Erro TicketTask ${id}:`,
-            erro.message
-        );
-
-        cacheTicketTasks.set(id, []);
-
-        return [];
-    }
-}
-
-
-/* ============================================================
  * RESOLVER TÉCNICO PELO TICKET_USER
  * ============================================================ */
 
@@ -633,50 +532,23 @@ async function resolverTecnicoTicketUser(
 
 
 /* ============================================================
- * RESOLVER TÉCNICO DAS TAREFAS
- * ============================================================ */
-
-async function resolverTecnicoDasTarefas(
-    sessao,
-    tarefas
-) {
-
-    if (
-        !Array.isArray(tarefas) ||
-        tarefas.length === 0
-    ) {
-
-        return '';
-    }
-
-    for (
-        const tarefa of tarefas
-    ) {
-
-        const usuarioId =
-            tarefa.users_id_tech;
-
-        if (!usuarioId) {
-            continue;
-        }
-
-        const nome =
-            await buscarNomeUsuarioGLPI(
-                sessao,
-                usuarioId
-            );
-
-        if (nome) {
-            return nome;
-        }
-    }
-
-    return '';
-}
-
-
-/* ============================================================
  * RESOLVER TÉCNICO DO CHAMADO
+ *
+ * IMPORTANTE:
+ *
+ * NÃO utiliza TicketTask.
+ *
+ * O técnico responsável será determinado somente por:
+ *
+ * 1. Campo de técnico retornado pelo chamado
+ * 2. Ticket_User com type = 2
+ *
+ * Se não houver técnico:
+ *
+ * retorna ''
+ *
+ * Isso permite que a sincronização remova
+ * a atribuição antiga da planilha.
  * ============================================================ */
 
 async function resolverTecnicoChamado(
@@ -698,6 +570,16 @@ async function resolverTecnicoChamado(
     if (!chamadoId) {
         return '';
     }
+
+    /*
+     * IMPORTANTE:
+     *
+     * O cache pertence somente à execução atual.
+     *
+     * Como o processo inicia novamente a cada
+     * sincronização, ele não mantém dados antigos
+     * entre execuções.
+     */
 
     if (
         cacheTecnicosChamados.has(chamadoId)
@@ -822,16 +704,12 @@ async function resolverTecnicoChamado(
             }
             else {
 
-                /*
-                 * Se o GLPI já retornou o nome,
-                 * utilizar o nome.
-                 */
-
                 nomeTecnico =
                     valor;
             }
         }
     }
+
 
     /* ========================================================
      * 2. TICKET_USER
@@ -852,24 +730,10 @@ async function resolverTecnicoChamado(
             );
     }
 
+
     /* ========================================================
-     * 3. TAREFAS
+     * RESULTADO FINAL
      * ======================================================== */
-
-    if (!nomeTecnico) {
-
-        const tarefas =
-            await buscarTicketTasks(
-                sessao,
-                chamadoId
-            );
-
-        nomeTecnico =
-            await resolverTecnicoDasTarefas(
-                sessao,
-                tarefas
-            );
-    }
 
     nomeTecnico =
         String(
@@ -926,8 +790,13 @@ async function enriquecerTecnicos(
 
             processados++;
 
+            const id =
+                chamado['2'] ||
+                chamado.id ||
+                '';
+
             console.log(
-                `Técnicos identificados: ${processados}/${chamados.length}`
+                `Técnico identificado: ${id} → ${nomeTecnico || 'SEM TÉCNICO'}`
             );
 
         }
@@ -989,9 +858,7 @@ async function buscarUsuarioPorLogin(
             )}`,
 
             `forcedisplay[0]=2`,
-
             `forcedisplay[1]=9`,
-
             `forcedisplay[2]=34`
         ];
 
@@ -1064,8 +931,6 @@ function limparCachesGLPI() {
     cacheTecnicosChamados.clear();
 
     cacheTicketUsers.clear();
-
-    cacheTicketTasks.clear();
 }
 
 
@@ -1088,8 +953,6 @@ module.exports = {
     buscarNomeUsuarioGLPI,
 
     buscarTicketUsers,
-
-    buscarTicketTasks,
 
     buscarUsuarioPorLogin,
 

@@ -1,4 +1,7 @@
-require('dotenv').config();
+require('dotenv').config({
+    path: require('path').resolve(__dirname, '../.env')
+});
+
 
 /* ============================================================
  * CONFIGURAÇÕES
@@ -8,6 +11,10 @@ const GLPI_URL_BASE =
     process.env.GLPI_URL_BASE ||
     'https://servicosti.seduc.am.gov.br/apirest.php';
 
+const TIMEZONE =
+    process.env.GLPI_TIMEZONE ||
+    'America/Manaus';
+
 
 /* ============================================================
  * CACHES
@@ -16,6 +23,8 @@ const GLPI_URL_BASE =
 const cacheUsuariosGLPI = new Map();
 const cacheTecnicosChamados = new Map();
 const cacheTicketUsers = new Map();
+const cacheLogsChamados = new Map();
+const cacheFollowupsChamados = new Map();
 
 
 /* ============================================================
@@ -281,6 +290,102 @@ async function buscarChamados(
 
 
 /* ============================================================
+ * BUSCAR CHAMADO ESPECÍFICO
+ * ============================================================ */
+
+async function buscarChamadoPorId(
+    sessao,
+    chamadoId
+) {
+
+    const id =
+        String(
+            chamadoId || ''
+        ).trim();
+
+    if (!id) {
+        return null;
+    }
+
+    const parametros = [
+
+        `criteria[0][field]=2`,
+
+        `criteria[0][searchtype]=equals`,
+
+        `criteria[0][value]=${encodeURIComponent(
+            id
+        )}`,
+
+        `forcedisplay[0]=2`,
+        `forcedisplay[1]=15`,
+        `forcedisplay[2]=83`,
+        `forcedisplay[3]=12`,
+        `forcedisplay[4]=21`,
+        `forcedisplay[5]=5`,
+        `forcedisplay[6]=19`,
+
+        `expand_dropdowns=true`,
+
+        `range=0-1`
+    ];
+
+    const url =
+        `${GLPI_URL_BASE}/search/Ticket?` +
+        parametros.join('&');
+
+    try {
+
+        const resposta =
+            await fetch(
+                url,
+                {
+                    method: 'GET',
+
+                    headers: {
+                        'Session-Token':
+                            sessao.sessionToken,
+
+                        'App-Token':
+                            sessao.appToken
+                    }
+                }
+            );
+
+        if (!resposta.ok) {
+
+            const texto =
+                await resposta.text();
+
+            throw new Error(
+                `HTTP ${resposta.status}: ${texto}`
+            );
+        }
+
+        const dados =
+            await resposta.json();
+
+        const registros =
+            Array.isArray(dados.data)
+                ? dados.data
+                : [];
+
+        return registros[0] || null;
+
+    }
+    catch (erro) {
+
+        console.error(
+            `Erro buscando chamado ${id}:`,
+            erro.message
+        );
+
+        return null;
+    }
+}
+
+
+/* ============================================================
  * BUSCAR USUÁRIO PELO ID
  * ============================================================ */
 
@@ -290,7 +395,9 @@ async function buscarNomeUsuarioGLPI(
 ) {
 
     const id =
-        String(usuarioId || '').trim();
+        String(
+            usuarioId || ''
+        ).trim();
 
     if (!id) {
         return '';
@@ -327,7 +434,10 @@ async function buscarNomeUsuarioGLPI(
                 `Erro ao consultar usuário ${id}: HTTP ${resposta.status}`
             );
 
-            cacheUsuariosGLPI.set(id, '');
+            cacheUsuariosGLPI.set(
+                id,
+                ''
+            );
 
             return '';
         }
@@ -385,7 +495,10 @@ async function buscarNomeUsuarioGLPI(
             erro.message
         );
 
-        cacheUsuariosGLPI.set(id, '');
+        cacheUsuariosGLPI.set(
+            id,
+            ''
+        );
 
         return '';
     }
@@ -402,7 +515,9 @@ async function buscarTicketUsers(
 ) {
 
     const id =
-        String(chamadoId || '').trim();
+        String(
+            chamadoId || ''
+        ).trim();
 
     if (!id) {
         return [];
@@ -439,7 +554,10 @@ async function buscarTicketUsers(
                 `Erro Ticket_User ${id}: HTTP ${resposta.status}`
             );
 
-            cacheTicketUsers.set(id, []);
+            cacheTicketUsers.set(
+                id,
+                []
+            );
 
             return [];
         }
@@ -467,7 +585,10 @@ async function buscarTicketUsers(
             erro.message
         );
 
-        cacheTicketUsers.set(id, []);
+        cacheTicketUsers.set(
+            id,
+            []
+        );
 
         return [];
     }
@@ -488,21 +609,18 @@ async function resolverTecnicoTicketUser(
         chamadosUsers.length === 0
     ) {
 
-        return '';
+        return {
+            nome: '',
+            id: ''
+        };
     }
-
-    /*
-     * GLPI:
-     *
-     * type 1 = requerente
-     * type 2 = técnico
-     * type 3 = observador
-     */
 
     const tecnicos =
         chamadosUsers.filter(
             usuario =>
-                String(usuario.type) === '2'
+                String(
+                    usuario.type
+                ) === '2'
         );
 
     for (
@@ -523,32 +641,24 @@ async function resolverTecnicoTicketUser(
             );
 
         if (nome) {
-            return nome;
+
+            return {
+                nome,
+                id:
+                    String(usuarioId)
+            };
         }
     }
 
-    return '';
+    return {
+        nome: '',
+        id: ''
+    };
 }
 
 
 /* ============================================================
  * RESOLVER TÉCNICO DO CHAMADO
- *
- * IMPORTANTE:
- *
- * NÃO utiliza TicketTask.
- *
- * O técnico responsável será determinado somente por:
- *
- * 1. Campo de técnico retornado pelo chamado
- * 2. Ticket_User com type = 2
- *
- * Se não houver técnico:
- *
- * retorna ''
- *
- * Isso permite que a sincronização remova
- * a atribuição antiga da planilha.
  * ============================================================ */
 
 async function resolverTecnicoChamado(
@@ -557,7 +667,11 @@ async function resolverTecnicoChamado(
 ) {
 
     if (!chamado) {
-        return '';
+
+        return {
+            nome: '',
+            id: ''
+        };
     }
 
     const chamadoId =
@@ -568,21 +682,17 @@ async function resolverTecnicoChamado(
         ).trim();
 
     if (!chamadoId) {
-        return '';
+
+        return {
+            nome: '',
+            id: ''
+        };
     }
 
-    /*
-     * IMPORTANTE:
-     *
-     * O cache pertence somente à execução atual.
-     *
-     * Como o processo inicia novamente a cada
-     * sincronização, ele não mantém dados antigos
-     * entre execuções.
-     */
-
     if (
-        cacheTecnicosChamados.has(chamadoId)
+        cacheTecnicosChamados.has(
+            chamadoId
+        )
     ) {
 
         return cacheTecnicosChamados.get(
@@ -591,6 +701,8 @@ async function resolverTecnicoChamado(
     }
 
     let nomeTecnico = '';
+    let tecnicoId = '';
+
 
     /* ========================================================
      * 1. CAMPO 5
@@ -615,6 +727,9 @@ async function resolverTecnicoChamado(
                 campoTecnico.users_id;
 
             if (id) {
+
+                tecnicoId =
+                    String(id);
 
                 nomeTecnico =
                     await buscarNomeUsuarioGLPI(
@@ -677,6 +792,9 @@ async function resolverTecnicoChamado(
 
                 if (nome) {
 
+                    tecnicoId =
+                        String(id);
+
                     nomeTecnico =
                         nome;
 
@@ -695,6 +813,9 @@ async function resolverTecnicoChamado(
             if (
                 /^\d+$/.test(valor)
             ) {
+
+                tecnicoId =
+                    valor;
 
                 nomeTecnico =
                     await buscarNomeUsuarioGLPI(
@@ -723,11 +844,17 @@ async function resolverTecnicoChamado(
                 chamadoId
             );
 
-        nomeTecnico =
+        const resultado =
             await resolverTecnicoTicketUser(
                 sessao,
                 usuarios
             );
+
+        nomeTecnico =
+            resultado.nome;
+
+        tecnicoId =
+            resultado.id;
     }
 
 
@@ -735,17 +862,614 @@ async function resolverTecnicoChamado(
      * RESULTADO FINAL
      * ======================================================== */
 
-    nomeTecnico =
-        String(
-            nomeTecnico || ''
-        ).trim();
+    const resultadoFinal = {
+
+        nome:
+            String(
+                nomeTecnico || ''
+            ).trim(),
+
+        id:
+            String(
+                tecnicoId || ''
+            ).trim()
+    };
 
     cacheTecnicosChamados.set(
         chamadoId,
-        nomeTecnico
+        resultadoFinal
     );
 
-    return nomeTecnico;
+    return resultadoFinal;
+}
+
+
+/* ============================================================
+ * BUSCAR LOG DO CHAMADO
+ * ============================================================ */
+
+async function buscarLogsChamado(
+    sessao,
+    chamadoId
+) {
+
+    const id =
+        String(
+            chamadoId || ''
+        ).trim();
+
+    if (!id) {
+        return [];
+    }
+
+    if (
+        cacheLogsChamados.has(id)
+    ) {
+
+        return cacheLogsChamados.get(id);
+    }
+
+    try {
+
+        const resposta =
+            await fetch(
+                `${GLPI_URL_BASE}/Ticket/${id}/Log/`,
+                {
+                    method: 'GET',
+
+                    headers: {
+                        'Session-Token':
+                            sessao.sessionToken,
+
+                        'App-Token':
+                            sessao.appToken
+                    }
+                }
+            );
+
+        if (!resposta.ok) {
+
+            console.error(
+                `Erro Log ${id}: HTTP ${resposta.status}`
+            );
+
+            cacheLogsChamados.set(
+                id,
+                []
+            );
+
+            return [];
+        }
+
+        const dados =
+            await resposta.json();
+
+        const logs =
+            Array.isArray(dados)
+                ? dados
+                : [];
+
+        cacheLogsChamados.set(
+            id,
+            logs
+        );
+
+        return logs;
+
+    }
+    catch (erro) {
+
+        console.error(
+            `Erro buscando Log ${id}:`,
+            erro.message
+        );
+
+        cacheLogsChamados.set(
+            id,
+            []
+        );
+
+        return [];
+    }
+}
+
+
+/* ============================================================
+ * BUSCAR FOLLOWUPS / DEVOLUTIVAS
+ * ============================================================ */
+
+async function buscarFollowupsChamado(
+    sessao,
+    chamadoId
+) {
+
+    const id =
+        String(
+            chamadoId || ''
+        ).trim();
+
+    if (!id) {
+        return [];
+    }
+
+    if (
+        cacheFollowupsChamados.has(id)
+    ) {
+
+        return cacheFollowupsChamados.get(id);
+    }
+
+    try {
+
+        const resposta =
+            await fetch(
+                `${GLPI_URL_BASE}/Ticket/${id}/TicketFollowup/`,
+                {
+                    method: 'GET',
+
+                    headers: {
+                        'Session-Token':
+                            sessao.sessionToken,
+
+                        'App-Token':
+                            sessao.appToken
+                    }
+                }
+            );
+
+        if (!resposta.ok) {
+
+            console.error(
+                `Erro TicketFollowup ${id}: HTTP ${resposta.status}`
+            );
+
+            cacheFollowupsChamados.set(
+                id,
+                []
+            );
+
+            return [];
+        }
+
+        const dados =
+            await resposta.json();
+
+        const followups =
+            Array.isArray(dados)
+                ? dados
+                : [];
+
+        cacheFollowupsChamados.set(
+            id,
+            followups
+        );
+
+        return followups;
+
+    }
+    catch (erro) {
+
+        console.error(
+            `Erro buscando Followups ${id}:`,
+            erro.message
+        );
+
+        cacheFollowupsChamados.set(
+            id,
+            []
+        );
+
+        return [];
+    }
+}
+
+
+/* ============================================================
+ * EXTRAIR DATA DA ATRIBUIÇÃO
+ * ============================================================ */
+
+function extrairDataAtribuicao(
+    logs,
+    tecnicoId
+) {
+
+    if (
+        !Array.isArray(logs) ||
+        !logs.length ||
+        !tecnicoId
+    ) {
+
+        return '';
+    }
+
+    const idTecnico =
+        String(
+            tecnicoId
+        ).trim();
+
+    const atribuicoes =
+        logs.filter(
+            log => {
+
+                const campo =
+                    String(
+                        log?.id_search_option || ''
+                    ).trim();
+
+                if (
+                    campo !== '5'
+                ) {
+                    return false;
+                }
+
+                const novoValor =
+                    String(
+                        log?.new_value || ''
+                    );
+
+                return novoValor.includes(
+                    `(${idTecnico})`
+                );
+            }
+        );
+
+    if (
+        !atribuicoes.length
+    ) {
+
+        return '';
+    }
+
+    atribuicoes.sort(
+        (a, b) =>
+            String(
+                a.date_mod || ''
+            ).localeCompare(
+                String(
+                    b.date_mod || ''
+                )
+            )
+    );
+
+    return String(
+        atribuicoes[
+            atribuicoes.length - 1
+        ]?.date_mod || ''
+    ).trim();
+}
+
+
+/* ============================================================
+ * OBTER DATA ATUAL NO FUSO DA GEMS
+ * ============================================================ */
+
+function obterDataAtualGLPI() {
+
+    const formatter =
+        new Intl.DateTimeFormat(
+            'en-CA',
+            {
+                timeZone:
+                    TIMEZONE,
+
+                year:
+                    'numeric',
+
+                month:
+                    '2-digit',
+
+                day:
+                    '2-digit'
+            }
+        );
+
+    return formatter.format(
+        new Date()
+    );
+}
+
+
+/* ============================================================
+ * VERIFICAR SE A ATRIBUIÇÃO FOI HOJE
+ * ============================================================ */
+
+function atribuicaoFoiHoje(
+    dataAtribuicao
+) {
+
+    if (
+        !dataAtribuicao
+    ) {
+        return false;
+    }
+
+    const data =
+        String(
+            dataAtribuicao
+        ).substring(
+            0,
+            10
+        );
+
+    return (
+        data ===
+        obterDataAtualGLPI()
+    );
+}
+
+
+/* ============================================================
+ * VERIFICAR DEVOLUTIVA DO TÉCNICO
+ * ============================================================ */
+
+function obterDevolutivasDoTecnico(
+    followups,
+    tecnicoId,
+    dataAtribuicao
+) {
+
+    if (
+        !Array.isArray(followups) ||
+        !followups.length ||
+        !tecnicoId
+    ) {
+
+        return [];
+    }
+
+    const idTecnico =
+        String(
+            tecnicoId
+        ).trim();
+
+    const dataInicio =
+        String(
+            dataAtribuicao || ''
+        ).trim();
+
+    return followups.filter(
+        followup => {
+
+            const usuarioId =
+                String(
+                    followup?.users_id || ''
+                ).trim();
+
+            /*
+             * A devolutiva precisa ser do técnico
+             * atualmente responsável pelo chamado.
+             */
+
+            if (
+                usuarioId !==
+                idTecnico
+            ) {
+
+                return false;
+            }
+
+            const dataFollowup =
+                String(
+                    followup?.date ||
+                    followup?.date_creation ||
+                    ''
+                ).trim();
+
+            if (
+                !dataFollowup
+            ) {
+
+                return false;
+            }
+
+            /*
+             * A devolutiva precisa ter ocorrido
+             * na mesma data ou depois da atribuição.
+             *
+             * Como o formato é YYYY-MM-DD HH:mm:ss,
+             * a comparação lexicográfica funciona
+             * corretamente.
+             */
+
+            if (
+                dataInicio &&
+                dataFollowup < dataInicio
+            ) {
+
+                return false;
+            }
+
+            return true;
+        }
+    );
+}
+
+
+/* ============================================================
+ * ENRIQUECER ATRIBUIÇÃO E DEVOLUTIVAS
+ * ============================================================ */
+
+async function enriquecerAtribuicaoEDevolutivas(
+    sessao,
+    chamados
+) {
+
+    if (
+        !Array.isArray(chamados) ||
+        chamados.length === 0
+    ) {
+
+        return [];
+    }
+
+    console.log('');
+
+    console.log(
+        'Identificando atribuições e devolutivas...'
+    );
+
+    let processados =
+        0;
+
+    for (
+        const chamado of chamados
+    ) {
+
+        /*
+         * Inicializa sempre os campos utilizados
+         * pela classificação gerencial.
+         */
+
+        chamado.atribuicaoHoje =
+            false;
+
+        chamado.dataAtribuicao =
+            '';
+
+        chamado.devolutivas =
+            [];
+
+        const status =
+            String(
+                chamado['12'] ||
+                chamado.status ||
+                ''
+            ).trim();
+
+        /*
+         * Somente chamados em atendimento precisam
+         * da análise de atribuição/devolutiva.
+         */
+
+        if (
+            status !== '2' &&
+            status !== '3'
+        ) {
+
+            continue;
+        }
+
+        const chamadoId =
+            String(
+                chamado['2'] ||
+                chamado.id ||
+                ''
+            ).trim();
+
+        if (!chamadoId) {
+            continue;
+        }
+
+        try {
+
+            const tecnicoId =
+                String(
+                    chamado.tecnicoId || ''
+                ).trim();
+
+            if (!tecnicoId) {
+                continue;
+            }
+
+            /*
+             * Primeiro buscamos o Log para descobrir
+             * quando o técnico atual foi atribuído.
+             */
+
+            const logs =
+                await buscarLogsChamado(
+                    sessao,
+                    chamadoId
+                );
+
+            const dataAtribuicao =
+                extrairDataAtribuicao(
+                    logs,
+                    tecnicoId
+                );
+
+            chamado.dataAtribuicao =
+                dataAtribuicao;
+
+            /*
+             * Se foi atribuído hoje:
+             *
+             * EM EXECUÇÃO.
+             *
+             * Não precisamos consultar followups.
+             */
+
+            if (
+                atribuicaoFoiHoje(
+                    dataAtribuicao
+                )
+            ) {
+
+                chamado.atribuicaoHoje =
+                    true;
+
+                chamado.devolutivas =
+                    [];
+
+                processados++;
+
+                continue;
+            }
+
+            /*
+             * Foi atribuído anteriormente.
+             *
+             * Agora verificamos se o técnico atual
+             * possui alguma devolutiva após sua atribuição.
+             */
+
+            const followups =
+                await buscarFollowupsChamado(
+                    sessao,
+                    chamadoId
+                );
+
+            chamado.devolutivas =
+                obterDevolutivasDoTecnico(
+                    followups,
+                    tecnicoId,
+                    dataAtribuicao
+                );
+
+            processados++;
+
+        }
+        catch (erro) {
+
+            console.error(
+                `Erro analisando atribuição/devolutiva do chamado ${chamadoId}:`,
+                erro.message
+            );
+
+            /*
+             * Em caso de erro, deixamos os dados vazios.
+             *
+             * O tratamento.js possui fallback seguro
+             * para não classificar como SEM DEVOLUTIVA
+             * quando não existe data de atribuição.
+             */
+
+            chamado.dataAtribuicao =
+                '';
+
+            chamado.devolutivas =
+                [];
+
+            chamado.atribuicaoHoje =
+                false;
+        }
+    }
+
+    console.log(
+        `✓ Atribuições/devolutivas analisadas: ${processados}`
+    );
+
+    return chamados;
 }
 
 
@@ -767,11 +1491,13 @@ async function enriquecerTecnicos(
     }
 
     console.log('');
+
     console.log(
         'Identificando técnicos responsáveis...'
     );
 
-    let processados = 0;
+    let processados =
+        0;
 
     for (
         const chamado of chamados
@@ -779,14 +1505,17 @@ async function enriquecerTecnicos(
 
         try {
 
-            const nomeTecnico =
+            const resultado =
                 await resolverTecnicoChamado(
                     sessao,
                     chamado
                 );
 
             chamado.tecnicoResponsavel =
-                nomeTecnico;
+                resultado.nome;
+
+            chamado.tecnicoId =
+                resultado.id;
 
             processados++;
 
@@ -796,7 +1525,7 @@ async function enriquecerTecnicos(
                 '';
 
             console.log(
-                `Técnico identificado: ${id} → ${nomeTecnico || 'SEM TÉCNICO'}`
+                `Técnico identificado: ${id} → ${resultado.nome || 'SEM TÉCNICO'}`
             );
 
         }
@@ -814,11 +1543,27 @@ async function enriquecerTecnicos(
 
             chamado.tecnicoResponsavel =
                 '';
+
+            chamado.tecnicoId =
+                '';
         }
     }
 
     console.log(
         '✓ Técnicos identificados.'
+    );
+
+    /*
+     * Segunda etapa:
+     *
+     * Agora que todos os chamados já possuem
+     * tecnicoId, conseguimos consultar o histórico
+     * de atribuição e as devolutivas.
+     */
+
+    await enriquecerAtribuicaoEDevolutivas(
+        sessao,
+        chamados
     );
 
     return chamados;
@@ -839,7 +1584,9 @@ async function buscarUsuarioPorLogin(
     }
 
     const valor =
-        String(login).trim();
+        String(
+            login
+        ).trim();
 
     if (!valor) {
         return '';
@@ -894,7 +1641,10 @@ async function buscarUsuarioPorLogin(
                 ? dados.data
                 : [];
 
-        if (!usuarios.length) {
+        if (
+            !usuarios.length
+        ) {
+
             return valor;
         }
 
@@ -931,6 +1681,10 @@ function limparCachesGLPI() {
     cacheTecnicosChamados.clear();
 
     cacheTicketUsers.clear();
+
+    cacheLogsChamados.clear();
+
+    cacheFollowupsChamados.clear();
 }
 
 
@@ -948,14 +1702,21 @@ module.exports = {
 
     enriquecerTecnicos,
 
+    enriquecerAtribuicaoEDevolutivas,
+
     resolverTecnicoChamado,
 
     buscarNomeUsuarioGLPI,
 
+    buscarChamadoPorId,
+
     buscarTicketUsers,
+
+    buscarLogsChamado,
+
+    buscarFollowupsChamado,
 
     buscarUsuarioPorLogin,
 
     limparCachesGLPI
-
 };

@@ -1,9 +1,4 @@
-/* ============================================================
- * TRATAMENTO DOS CHAMADOS GLPI
- * ============================================================ */
-
 const MESES = [
-
     'Janeiro',
     'Fevereiro',
     'Março',
@@ -16,12 +11,11 @@ const MESES = [
     'Outubro',
     'Novembro',
     'Dezembro'
-
 ];
 
 
 /* ============================================================
- * NORMALIZAÇÃO
+ * NORMALIZAR TEXTO
  * ============================================================ */
 
 function normalizarTexto(texto) {
@@ -36,14 +30,7 @@ function normalizarTexto(texto) {
 
 
 /* ============================================================
- * CONVERTER DATA DO GLPI
- *
- * Retorna:
- *
- * DD/MM/AAAA
- *
- * Sem UTC.
- * Sem conversão de timezone.
+ * CONVERTER DATA GLPI
  * ============================================================ */
 
 function converterDataGLPI(texto) {
@@ -72,10 +59,7 @@ function converterDataGLPI(texto) {
 
     if (formatoBR) {
 
-        return valor.substring(
-            0,
-            10
-        );
+        return valor.substring(0, 10);
     }
 
     return '';
@@ -162,7 +146,7 @@ function classificarLocal(local) {
 
 
 /* ============================================================
- * STATUS
+ * MAPA STATUS GLPI
  * ============================================================ */
 
 const MAPA_STATUS = {
@@ -178,7 +162,6 @@ const MAPA_STATUS = {
     '5': 'CONCLUIDO',
 
     '6': 'CONCLUIDO'
-
 };
 
 
@@ -193,40 +176,21 @@ function limparObservacao(texto) {
     }
 
     return String(texto)
-
         .replace(/&#60;/g, '<')
-
         .replace(/&#62;/g, '>')
-
         .replace(/&lt;/g, '<')
-
         .replace(/&gt;/g, '>')
-
         .replace(/&amp;/g, '&')
-
         .replace(/&quot;/g, '"')
-
-        .replace(
-            /&#39;|&apos;/g,
-            "'"
-        )
-
-        .replace(
-            /<[^>]*>/g,
-            ' '
-        )
-
-        .replace(
-            /\s+/g,
-            ' '
-        )
-
+        .replace(/&#39;|&apos;/g, "'")
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim();
 }
 
 
 /* ============================================================
- * TRATAR TÉCNICO
+ * TRATAR TÉCNICO RESPONSÁVEL
  * ============================================================ */
 
 function tratarTecnicoResponsavel(tecnico) {
@@ -239,39 +203,30 @@ function tratarTecnicoResponsavel(tecnico) {
         return '';
     }
 
-    if (
-        Array.isArray(tecnico)
-    ) {
+    if (Array.isArray(tecnico)) {
 
         return tecnico
+            .map(item => {
 
-            .map(
-                item => {
+                if (
+                    typeof item === 'object' &&
+                    item !== null
+                ) {
 
-                    if (
-                        typeof item === 'object' &&
-                        item !== null
-                    ) {
-
-                        return (
-                            item.completename ||
-                            item.name ||
-                            item.realname ||
-                            ''
-                        );
-                    }
-
-                    return String(item);
+                    return (
+                        item.completename ||
+                        item.name ||
+                        item.realname ||
+                        ''
+                    );
                 }
-            )
 
-            .map(
-                item =>
-                    String(item).trim()
+                return String(item);
+            })
+            .map(item =>
+                String(item).trim()
             )
-
             .filter(Boolean)
-
             .join(', ');
     }
 
@@ -281,16 +236,134 @@ function tratarTecnicoResponsavel(tecnico) {
     ) {
 
         return String(
-
             tecnico.completename ||
             tecnico.name ||
             tecnico.realname ||
             ''
-
         ).trim();
     }
 
     return String(tecnico).trim();
+}
+
+
+/* ============================================================
+ * CLASSIFICAR STATUS GERENCIAL
+ * ============================================================ */
+
+function classificarStatusGerencial(chamado) {
+
+    if (!chamado) {
+        return 'PENDENTE';
+    }
+
+    const codigoStatus =
+        String(
+            chamado['12'] ||
+            chamado.status ||
+            ''
+        ).trim();
+
+
+    /* ========================================================
+     * CHAMADOS CONCLUÍDOS
+     * ======================================================== */
+
+    if (
+        codigoStatus === '5' ||
+        codigoStatus === '6'
+    ) {
+
+        return 'CONCLUIDO';
+    }
+
+
+    /* ========================================================
+     * CHAMADOS PENDENTES
+     * ======================================================== */
+
+    if (
+        codigoStatus === '1' ||
+        codigoStatus === '4'
+    ) {
+
+        return 'PENDENTE';
+    }
+
+
+    /* ========================================================
+     * CHAMADOS EM ATENDIMENTO
+     * ======================================================== */
+
+    if (
+        codigoStatus === '2' ||
+        codigoStatus === '3'
+    ) {
+
+        /*
+         * Se a atribuição ocorreu hoje,
+         * o chamado ainda está dentro do prazo
+         * inicial de atendimento.
+         */
+
+        if (
+            chamado.atribuicaoHoje === true
+        ) {
+
+            return 'EM EXECUÇÃO';
+        }
+
+
+        /*
+         * Se não temos a informação da atribuição,
+         * mantemos EM EXECUÇÃO para evitar uma
+         * classificação incorreta como SEM DEVOLUTIVA.
+         */
+
+        if (
+            !chamado.dataAtribuicao
+        ) {
+
+            return 'EM EXECUÇÃO';
+        }
+
+
+        /*
+         * A atribuição ocorreu em dia anterior.
+         *
+         * Agora verificamos se existe pelo menos
+         * uma devolutiva válida do técnico.
+         */
+
+        const devolutivas =
+            Array.isArray(
+                chamado.devolutivas
+            )
+                ? chamado.devolutivas
+                : [];
+
+
+        if (
+            devolutivas.length > 0
+        ) {
+
+            return 'COM DEVOLUTIVA';
+        }
+
+
+        return 'SEM DEVOLUTIVA';
+    }
+
+
+    /*
+     * Fallback para qualquer código de status
+     * não previsto.
+     */
+
+    return (
+        MAPA_STATUS[codigoStatus] ||
+        'PENDENTE'
+    );
 }
 
 
@@ -303,10 +376,6 @@ function tratarChamado(chamado) {
     if (!chamado) {
         return null;
     }
-
-    /* ========================================================
-     * GLPI
-     * ======================================================== */
 
     const numeroGlpi =
         String(
@@ -321,7 +390,7 @@ function tratarChamado(chamado) {
 
 
     /* ========================================================
-     * DATA
+     * DATA DE ABERTURA
      * ======================================================== */
 
     const dataOriginal =
@@ -333,6 +402,11 @@ function tratarChamado(chamado) {
         converterDataGLPI(
             dataOriginal
         );
+
+
+    /* ========================================================
+     * MÊS
+     * ======================================================== */
 
     const mes =
         obterMesDaDataGLPI(
@@ -351,19 +425,13 @@ function tratarChamado(chamado) {
 
 
     /* ========================================================
-     * STATUS
+     * STATUS GERENCIAL
      * ======================================================== */
 
-    const codigoStatus =
-        String(
-            chamado['12'] ||
-            chamado.status ||
-            ''
-        ).trim();
-
     const status =
-        MAPA_STATUS[codigoStatus] ||
-        'PENDENTE';
+        classificarStatusGerencial(
+            chamado
+        );
 
 
     /* ========================================================
@@ -378,7 +446,7 @@ function tratarChamado(chamado) {
 
 
     /* ========================================================
-     * TÉCNICO
+     * TÉCNICO RESPONSÁVEL
      * ======================================================== */
 
     const tecnicoResponsavel =
@@ -418,15 +486,7 @@ function tratarChamado(chamado) {
 
 
 /* ============================================================
- * TRANSFORMAR PARA GOOGLE SHEETS
- *
- * A = DATA
- * B = GLPI
- * C = MES
- * D = LOCAL
- * E = TECNICO RESPONSAVEL
- * F = STATUS
- * G = OBSERVACAO
+ * CONVERTER PARA LINHA DO GOOGLE SHEETS
  * ============================================================ */
 
 function chamadoParaLinhaSheets(chamado) {
@@ -450,7 +510,6 @@ function chamadoParaLinhaSheets(chamado) {
         chamado.status || '',
 
         chamado.observacao || ''
-
     ];
 }
 
@@ -475,6 +534,7 @@ module.exports = {
 
     tratarTecnicoResponsavel,
 
-    normalizarTexto
+    classificarStatusGerencial,
 
+    normalizarTexto
 };

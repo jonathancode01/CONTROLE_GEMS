@@ -4,7 +4,8 @@ const {
     iniciarSessaoGLPI,
     encerrarSessaoGLPI,
     buscarChamados,
-    enriquecerTecnicos
+    enriquecerTecnicos,
+    limparCachesGLPI
 } = require('./src/glpi');
 
 const {
@@ -101,11 +102,6 @@ async function buscarTodosChamados(sessao) {
                 continue;
             }
 
-            /*
-             * Se o chamado já foi recebido anteriormente,
-             * não adiciona novamente.
-             */
-
             if (!mapaChamados.has(id)) {
 
                 mapaChamados.set(
@@ -175,27 +171,7 @@ async function buscarTodosChamados(sessao) {
     /*
      * =========================================================
      * PROTEÇÃO CONTRA CONSULTA INCOMPLETA
-     * =========================================================
-     *
-     * Agora que a sincronização também remove chamados que
-     * saíram da GEMS, precisamos ter certeza de que a consulta
-     * ao GLPI trouxe todos os chamados.
-     *
-     * Se o GLPI informar, por exemplo:
-     *
-     * totalcount = 500
-     *
-     * mas recebermos somente:
-     *
-     * 430 chamados
-     *
-     * NÃO podemos considerar os outros 70 como "fora da GEMS",
-     * pois eles podem simplesmente não ter sido retornados
-     * pela API.
-     *
-     * Nesse caso a sincronização é interrompida antes das
-     * exclusões.
-     */
+     * ========================================================= */
 
     const consultaCompleta =
         total === null ||
@@ -223,13 +199,6 @@ async function buscarTodosChamados(sessao) {
 
 /* ============================================================
  * DEDUPLICAR CHAMADOS DO GLPI
- *
- * Garante:
- *
- * 1 GLPI = 1 objeto
- *
- * Caso a API retorne o mesmo chamado duas vezes,
- * somente uma ocorrência será processada.
  * ============================================================ */
 
 function deduplicarChamados(chamados) {
@@ -331,11 +300,6 @@ function preservarDataExistente(
 
 /* ============================================================
  * CRIAR MAPA DA PLANILHA
- *
- * Também detecta duplicados existentes.
- *
- * O primeiro registro encontrado será mantido.
- * Os demais serão removidos.
  * ============================================================ */
 
 function criarMapaPlanilha(
@@ -352,10 +316,6 @@ function criarMapaPlanilha(
 
     dadosPlanilha.forEach(
         (linha, indice) => {
-
-            /*
-             * Ignorar cabeçalho.
-             */
 
             if (
                 indice === 0
@@ -625,11 +585,6 @@ async function executar() {
             0;
 
 
-        /*
-         * Controle para impedir que um mesmo GLPI
-         * seja colocado duas vezes em "novos".
-         */
-
         const novosGlpis =
             new Set();
 
@@ -683,29 +638,17 @@ async function executar() {
 
                     if (!existente) {
 
-                        /*
-                         * Novo sem técnico:
-                         *
-                         * Não entra na planilha.
-                         */
-
                         if (!temTecnico) {
 
                             ignoradosSemTecnico++;
-
 
                             console.log(
                                 `⏭ Chamado ${numeroGlpi} ignorado: novo e sem técnico.`
                             );
 
-
                             return;
                         }
 
-
-                        /*
-                         * Proteção adicional contra duplicação.
-                         */
 
                         if (
                             novosGlpis.has(
@@ -716,7 +659,6 @@ async function executar() {
                             console.log(
                                 `⚠ Chamado ${numeroGlpi} já está na fila de novos. Ignorando duplicação.`
                             );
-
 
                             return;
                         }
@@ -734,11 +676,6 @@ async function executar() {
                                 linha
                             );
 
-
-                            /*
-                             * Marca o GLPI como novo já processado.
-                             */
-
                             novosGlpis.add(
                                 numeroGlpi
                             );
@@ -752,12 +689,6 @@ async function executar() {
                     /* ========================================
                      * CHAMADO EXISTENTE SEM TÉCNICO
                      * ======================================== */
-
-                    /*
-                     * Se o chamado já existe e o GLPI
-                     * não possui técnico, removemos da planilha
-                     * independentemente do status.
-                     */
 
                     if (!temTecnico) {
 
@@ -800,10 +731,6 @@ async function executar() {
                     }
 
 
-                    /*
-                     * Preservar data histórica.
-                     */
-
                     const linhaFinal =
                         preservarDataExistente(
                             existente.dados,
@@ -844,27 +771,6 @@ async function executar() {
          * 5.1. RECONCILIAR CHAMADOS FORA DA GEMS
          * ==================================================== */
 
-        /*
-         * ESTE É O PRINCIPAL AJUSTE.
-         *
-         * Antes:
-         *
-         * O sistema só analisava os chamados que ainda
-         * pertenciam à GEMS.
-         *
-         * Se um chamado saísse da GEMS, ele desaparecia
-         * da consulta e nunca era processado.
-         *
-         * Agora:
-         *
-         * Comparamos os GLPIs da planilha com todos os
-         * GLPIs atualmente pertencentes à GEMS.
-         *
-         * Se um GLPI estiver na planilha mas não estiver
-         * mais na GEMS, ele será removido.
-         */
-
-
         const glpisAtuaisDaGems =
             new Set();
 
@@ -894,21 +800,10 @@ async function executar() {
             0;
 
 
-        /*
-         * Percorre todos os chamados existentes
-         * na planilha.
-         */
-
         for (
             const [glpi, registro]
             of mapaPlanilha
         ) {
-
-            /*
-             * Registros adicionados como novos
-             * nesta mesma execução ainda não possuem
-             * número de linha definitivo.
-             */
 
             if (
                 registro.linha === null
@@ -917,21 +812,11 @@ async function executar() {
             }
 
 
-            /*
-             * Se o GLPI existente na planilha não estiver
-             * no conjunto atual da GEMS, significa que o
-             * chamado deixou de pertencer à GEMS.
-             */
-
             if (
                 !glpisAtuaisDaGems.has(
                     glpi
                 )
             ) {
-
-                /*
-                 * Evita adicionar a mesma linha duas vezes.
-                 */
 
                 if (
                     !linhasParaRemover.includes(
@@ -964,10 +849,6 @@ async function executar() {
          * 5.2. REMOVER DUPLICADOS DA PLANILHA
          * ==================================================== */
 
-        /*
-         * Os duplicados históricos também serão removidos.
-         */
-
         duplicadosPlanilha.forEach(
             linha => {
 
@@ -995,46 +876,37 @@ async function executar() {
             '------------------------------------'
         );
 
-
         console.log(
             `Novos chamados: ${novos.length}`
         );
-
 
         console.log(
             `Chamados existentes para atualizar: ${atualizados.length}`
         );
 
-
         console.log(
             `Novos sem técnico ignorados: ${ignoradosSemTecnico}`
         );
-
 
         console.log(
             `Chamados fora da GEMS: ${removidosForaDaGems}`
         );
 
-
         console.log(
             `Chamados existentes sem técnico: ${removidosSemTecnico}`
         );
-
 
         console.log(
             `Linhas para remover: ${linhasParaRemover.length}`
         );
 
-
         console.log(
             `Duplicados históricos encontrados: ${duplicadosPlanilha.length}`
         );
 
-
         console.log(
             '------------------------------------'
         );
-
 
         console.log('');
 
@@ -1172,64 +1044,51 @@ async function executar() {
             '===================================='
         );
 
-
         console.log(
             ' SINCRONIZAÇÃO CONCLUÍDA'
         );
-
 
         console.log(
             '===================================='
         );
 
-
         console.log('');
-
 
         console.log(
             `Novos inseridos: ${novos.length}`
         );
 
-
         console.log(
             `Atualizados: ${atualizados.length}`
         );
-
 
         console.log(
             `Novos sem técnico ignorados: ${ignoradosSemTecnico}`
         );
 
-
         console.log(
             `Chamados existentes sem técnico removidos: ${removidosSemTecnico}`
         );
-
 
         console.log(
             `Chamados fora da GEMS removidos: ${removidosForaDaGems}`
         );
 
-
         console.log(
             `Linhas removidas: ${linhasParaRemover.length}`
         );
-
 
         console.log(
             `Duplicados históricos: ${duplicadosPlanilha.length}`
         );
 
-
         console.log(
             `Total recebido do GLPI: ${quantidadeAntes}`
         );
 
-
         console.log(
             `Total único processado: ${quantidadeDepois}`
         );
-
 
         console.log('');
 
@@ -1240,32 +1099,25 @@ async function executar() {
 
         console.error('');
 
-
         console.error(
             '===================================='
         );
-
 
         console.error(
             ' ERRO NA SINCRONIZAÇÃO'
         );
 
-
         console.error(
             '===================================='
         );
 
-
         console.error('');
-
 
         console.error(
             erro.message
         );
 
-
         console.error('');
-
 
         console.error(
             erro.stack
@@ -1274,6 +1126,29 @@ async function executar() {
 
 
     finally {
+
+        /* ====================================================
+         * LIMPAR CACHES GLPI
+         * ==================================================== */
+
+        try {
+
+            limparCachesGLPI();
+
+            console.log(
+                '✓ Caches do GLPI limpos.'
+            );
+
+        }
+
+        catch (erro) {
+
+            console.error(
+                'Erro ao limpar caches do GLPI:',
+                erro.message
+            );
+        }
+
 
         /* ====================================================
          * ENCERRAR GLPI

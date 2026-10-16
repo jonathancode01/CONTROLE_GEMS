@@ -11,10 +11,6 @@ const GLPI_URL_BASE =
     process.env.GLPI_URL_BASE ||
     'https://servicosti.seduc.am.gov.br/apirest.php';
 
-const TIMEZONE =
-    process.env.GLPI_TIMEZONE ||
-    'America/Manaus';
-
 
 /* ============================================================
  * CACHES

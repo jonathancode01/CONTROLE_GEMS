@@ -292,127 +292,6 @@ function tratarTecnicoResponsavel(tecnico) {
     return String(tecnico).trim();
 }
 
-
-/* ============================================================
- * CLASSIFICAR STATUS GERENCIAL
- * ============================================================ */
-
-function classificarStatusGerencial(chamado) {
-
-    if (!chamado) {
-        return 'PENDENTE';
-    }
-
-    const codigoStatus =
-        String(
-            chamado['12'] ||
-            chamado.status ||
-            ''
-        ).trim();
-
-
-    /* ========================================================
-     * CHAMADOS CONCLUÍDOS
-     * ======================================================== */
-
-    if (
-        codigoStatus === '5' ||
-        codigoStatus === '6'
-    ) {
-
-        return 'CONCLUIDO';
-    }
-
-
-    /* ========================================================
-     * CHAMADOS PENDENTES
-     * ======================================================== */
-
-    if (
-        codigoStatus === '1' ||
-        codigoStatus === '4'
-    ) {
-
-        return 'PENDENTE';
-    }
-
-
-    /* ========================================================
-     * CHAMADOS EM ATENDIMENTO
-     * ======================================================== */
-
-    if (
-        codigoStatus === '2' ||
-        codigoStatus === '3'
-    ) {
-
-        /*
-         * Se a atribuição ocorreu hoje,
-         * o chamado ainda está dentro do prazo
-         * inicial de atendimento.
-         */
-
-        if (
-            chamado.atribuicaoHoje === true
-        ) {
-
-            return 'EM EXECUÇÃO';
-        }
-
-
-        /*
-         * Se não temos a informação da atribuição,
-         * mantemos EM EXECUÇÃO para evitar uma
-         * classificação incorreta como SEM DEVOLUTIVA.
-         */
-
-        if (
-            !chamado.dataAtribuicao
-        ) {
-
-            return 'EM EXECUÇÃO';
-        }
-
-
-        /*
-         * A atribuição ocorreu em dia anterior.
-         *
-         * Agora verificamos se existe pelo menos
-         * uma devolutiva válida do técnico.
-         */
-
-        const devolutivas =
-            Array.isArray(
-                chamado.devolutivas
-            )
-                ? chamado.devolutivas
-                : [];
-
-
-        if (
-            devolutivas.length > 0
-        ) {
-
-            return 'COM DEVOLUTIVA';
-        }
-
-
-        return 'SEM DEVOLUTIVA';
-    }
-
-
-    /*
-     * Fallback para qualquer código de status
-     * não previsto.
-     */
-
-    return (
-        MAPA_STATUS[codigoStatus] ||
-        'PENDENTE'
-    );
-}
-
-
 /* ============================================================
  * TRATAR CHAMADO
  * ============================================================ */
@@ -562,24 +441,13 @@ function chamadoParaLinhaSheets(chamado) {
  * ============================================================ */
 
 module.exports = {
-
     tratarChamado,
-
     chamadoParaLinhaSheets,
-
     converterDataGLPI,
-
     obterMesDaDataGLPI,
-
     classificarLocal,
-
     limparObservacao,
-
     tratarTecnicoResponsavel,
-
-    classificarStatusGerencial,
-
     normalizarTexto,
-    
     classificarStatusGerencial
 };

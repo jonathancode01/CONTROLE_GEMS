@@ -1473,6 +1473,248 @@ async function enriquecerAtribuicaoEDevolutivas(
 }
 
 
+
+/* ============================================================
+ * HISTÓRICO DE ATRIBUIÇÃO E DEVOLUTIVAS
+ * ============================================================ */
+
+const TIMEZONE = 'America/Manaus';
+
+async function consultarRelacaoGLPI(sessao, chamadoId, relacao) {
+    const id = String(chamadoId || '').trim();
+
+    if (!id) {
+        throw new Error('ID do chamado não informado.');
+    }
+
+    const resposta = await fetch(
+        `${GLPI_URL_BASE}/Ticket/${id}/${relacao}/`,
+        {
+            method: 'GET',
+            headers: {
+                'Session-Token': sessao.sessionToken,
+                'App-Token': sessao.appToken
+            }
+        }
+    );
+
+    if (!resposta.ok) {
+        const texto = await resposta.text();
+        throw new Error(
+            `${relacao} do chamado ${id}: HTTP ${resposta.status}: ${texto}`
+        );
+    }
+
+    const dados = await resposta.json();
+
+    if (Array.isArray(dados)) {
+        return dados;
+    }
+
+    if (Array.isArray(dados.data)) {
+        return dados.data;
+    }
+
+    return [];
+}
+
+async function buscarLogsChamado(sessao, chamadoId) {
+    return consultarRelacaoGLPI(sessao, chamadoId, 'Log');
+}
+
+async function buscarFollowupsChamado(sessao, chamadoId) {
+    return consultarRelacaoGLPI(sessao, chamadoId, 'ITILFollowup');
+}
+
+function obterDataAtualGLPI() {
+    const partes = new Intl.DateTimeFormat('en-CA', {
+        timeZone: TIMEZONE,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+    }).formatToParts(new Date());
+
+    const valores = {};
+
+    for (const parte of partes) {
+        valores[parte.type] = parte.value;
+    }
+
+    return `${valores.year}-${valores.month}-${valores.day}`;
+}
+
+function extrairDataAtribuicao(logs, tecnicoId) {
+    const idTecnico = String(tecnicoId || '').trim();
+
+    if (!idTecnico || !Array.isArray(logs)) {
+        return '';
+    }
+
+    const atribuicoes = logs.filter(log => {
+        const campo = String(log.id_search_option ?? '').trim();
+        const novoValor = String(log.new_value ?? '').trim();
+
+        return campo === '5' &&
+            (
+                novoValor === idTecnico ||
+                novoValor.includes(`(${idTecnico})`)
+            ) &&
+            Boolean(log.date_mod);
+    });
+
+    atribuicoes.sort((a, b) =>
+        String(b.date_mod).localeCompare(String(a.date_mod))
+    );
+
+    return atribuicoes[0]?.date_mod || '';
+}
+
+function obterDevolutivasDoTecnico(followups, tecnicoId, dataAtribuicao) {
+    const idTecnico = String(tecnicoId || '').trim();
+    const dataInicio = String(dataAtribuicao || '').slice(0, 10);
+
+    if (
+        !idTecnico ||
+        !dataInicio ||
+        !Array.isArray(followups)
+    ) {
+        return [];
+    }
+
+    return followups.filter(item => {
+        const autorId = String(
+            item.users_id ?? item.users_id_editor ?? ''
+        ).trim();
+
+        const dataRegistro = String(
+            item.date ?? item.date_creation ?? ''
+        ).slice(0, 10);
+
+        return autorId === idTecnico &&
+            /^\d{4}-\d{2}-\d{2}$/.test(dataRegistro) &&
+            dataRegistro >= dataInicio;
+    });
+}
+
+async function obterTecnicoIdChamado(sessao, chamado, nomeTecnico) {
+    const campoTecnico = chamado['5'];
+
+    // Quando o campo 5 contém diretamente o ID do usuário.
+    if (
+        typeof campoTecnico === 'number' ||
+        (
+            typeof campoTecnico === 'string' &&
+            /^\d+$/.test(campoTecnico.trim())
+        )
+    ) {
+        return String(campoTecnico).trim();
+    }
+
+    // Quando o campo 5 contém um objeto com o ID.
+    if (campoTecnico && typeof campoTecnico === 'object' &&
+        !Array.isArray(campoTecnico)) {
+        const id = campoTecnico.id ?? campoTecnico.users_id;
+
+        if (id) {
+            return String(id);
+        }
+    }
+
+    // Alternativa: identificar o técnico pelos vínculos Ticket_User.
+    const usuarios = await buscarTicketUsers(
+        sessao,
+        chamado['2'] ?? chamado.id
+    );
+
+    for (const usuario of usuarios) {
+        if (String(usuario.type) !== '2' || !usuario.users_id) {
+            continue;
+        }
+
+        const nome = await buscarNomeUsuarioGLPI(
+            sessao,
+            usuario.users_id
+        );
+
+        if (
+            nome &&
+            nome.trim().toLowerCase() ===
+                String(nomeTecnico || '').trim().toLowerCase()
+        ) {
+            return String(usuario.users_id);
+        }
+    }
+
+    return '';
+}
+
+async function enriquecerAtribuicaoEDevolutivas(sessao, chamado) {
+    chamado.dadosGerenciaisConsultados = false;
+    chamado.atribuicaoHoje = false;
+    chamado.dataAtribuicao = '';
+    chamado.devolutivas = [];
+
+    const codigoStatus = String(
+        chamado['12'] ?? chamado.status ?? ''
+    ).trim();
+
+    // O histórico adicional só é necessário para chamados em atendimento.
+    if (codigoStatus !== '2' && codigoStatus !== '3') {
+        return chamado;
+    }
+
+    try {
+        const idChamado = chamado['2'] ?? chamado.id;
+        const tecnicoId = await obterTecnicoIdChamado(
+            sessao,
+            chamado,
+            chamado.tecnicoResponsavel
+        );
+
+        if (!tecnicoId) {
+            throw new Error('Não foi possível identificar o ID do técnico atual.');
+        }
+
+        const [logs, followups] = await Promise.all([
+            buscarLogsChamado(sessao, idChamado),
+            buscarFollowupsChamado(sessao, idChamado)
+        ]);
+
+        const dataAtribuicao = extrairDataAtribuicao(
+            logs,
+            tecnicoId
+        );
+
+        if (!dataAtribuicao) {
+            throw new Error('Não foi encontrada a data de atribuição ao técnico atual.');
+        }
+
+        chamado.tecnicoId = tecnicoId;
+        chamado.dataAtribuicao = dataAtribuicao;
+        chamado.atribuicaoHoje =
+            String(dataAtribuicao).slice(0, 10) === obterDataAtualGLPI();
+
+        chamado.devolutivas = obterDevolutivasDoTecnico(
+            followups,
+            tecnicoId,
+            dataAtribuicao
+        );
+
+        chamado.dadosGerenciaisConsultados = true;
+    } catch (erro) {
+        console.error(
+            `Não foi possível classificar gerencialmente o chamado ${
+                chamado['2'] ?? chamado.id ?? ''
+            }:`,
+            erro.message
+        );
+    }
+
+    return chamado;
+}
+
+
+
 /* ============================================================
  * ENRIQUECER CHAMADOS
  * ============================================================ */
@@ -1516,6 +1758,11 @@ async function enriquecerTecnicos(
 
             chamado.tecnicoId =
                 resultado.id;
+
+            await enriquecerAtribuicaoEDevolutivas(
+            sessao,
+            chamado
+        );
 
             processados++;
 

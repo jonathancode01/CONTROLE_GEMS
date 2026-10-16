@@ -146,23 +146,69 @@ function classificarLocal(local) {
 
 
 /* ============================================================
- * MAPA STATUS GLPI
+ * STATUS
+ * ============================================================ */
+
+
+/* ============================================================
+ * STATUS DO GLPI E CLASSIFICAÇÃO GERENCIAL
  * ============================================================ */
 
 const MAPA_STATUS = {
-
     '1': 'PENDENTE',
-
     '2': 'EM EXECUÇÃO',
-
     '3': 'EM EXECUÇÃO',
-
     '4': 'PENDENTE',
-
     '5': 'CONCLUIDO',
-
     '6': 'CONCLUIDO'
 };
+
+function classificarStatusGerencial(chamado) {
+    if (!chamado) {
+        return 'PENDENTE';
+    }
+
+    const codigoStatus = String(
+        chamado['12'] ?? chamado.status ?? ''
+    ).trim();
+
+    // Priorizar os status oficiais do GLPI.
+    if (codigoStatus === '5' || codigoStatus === '6') {
+        return 'CONCLUIDO';
+    }
+
+    if (codigoStatus === '1' || codigoStatus === '4') {
+        return 'PENDENTE';
+    }
+
+    if (codigoStatus === '2' || codigoStatus === '3') {
+        // Sem confirmação dos dados de atribuição,
+        // não classificar automaticamente como sem devolutiva.
+        if (chamado.dadosGerenciaisConsultados !== true) {
+            return 'EM EXECUÇÃO';
+        }
+
+        // Não marcar como sem devolutiva no dia da atribuição.
+        if (chamado.atribuicaoHoje === true) {
+            return 'EM EXECUÇÃO';
+        }
+
+        // Sem data confiável da atribuição, manter o status neutro.
+        if (!chamado.dataAtribuicao) {
+            return 'EM EXECUÇÃO';
+        }
+
+        const devolutivas = Array.isArray(chamado.devolutivas)
+            ? chamado.devolutivas
+            : [];
+
+        return devolutivas.length > 0
+            ? 'COM DEVOLUTIVA'
+            : 'SEM DEVOLUTIVA';
+    }
+
+    return MAPA_STATUS[codigoStatus] || 'PENDENTE';
+}
 
 
 /* ============================================================
@@ -429,10 +475,7 @@ function tratarChamado(chamado) {
      * ======================================================== */
 
     const status =
-        classificarStatusGerencial(
-            chamado
-        );
-
+        classificarStatusGerencial(chamado);
 
     /* ========================================================
      * OBSERVAÇÃO
@@ -536,5 +579,7 @@ module.exports = {
 
     classificarStatusGerencial,
 
-    normalizarTexto
+    normalizarTexto,
+    
+    classificarStatusGerencial
 };
